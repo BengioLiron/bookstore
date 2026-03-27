@@ -554,21 +554,28 @@ if (window.emailjs) {
   console.warn('EmailJS library not נטען. וודא שיש חיבור לאינטרנט ולהרבה js של emailjs.');
 }
 
-let books = [
-  {id:1,title:'מאה שנות בדידות',author:'גבריאל גרסיה מרקס',cat:'רומן',price:45,date:Date.now()-100000},
-  {id:2,title:'1984',author:"ג'ורג' אורוול",cat:'מדע בדיוני',price:35,date:Date.now()-200000},
-  {id:3,title:'הנסיך הקטן',author:'אנטואן דה סנט-אכזופרי',cat:'ילדים',price:28,date:Date.now()-300000},
-  {id:4,title:'עלייתו ונפילתו של הרייך השלישי',author:'ויליאם שייר',cat:'היסטוריה',price:55,date:Date.now()-50000},
-  {id:5,title:'כך דיבר זרתוסטרה',author:'פרידריך ניטשה',cat:'פילוסופיה',price:40,date:Date.now()-80000},
-  {id:6,title:'הנביא',author:'ח\'ליל ג\'ובראן',cat:'פילוסופיה',price:30,date:Date.now()-10000},
-  {id:7,title:'החצר השמאלית',author:'עמוס עוז',cat:'רומן',price:38,date:Date.now()-400000},
-  {id:8,title:'דיוני',author:'פרנק הרברט',cat:'מדע בדיוני',price:50,date:Date.now()-60000},
-];
+let books = [];
 let requests = [];
 let nextId = 9;
 const ADMIN_PASSWORD = 'ספרן2026';
 let isAdmin = false;
 let editingBookId = null;
+
+function fetchBooks() {
+  fetch('/api/books')
+    .then(r=>r.json())
+    .then(data=>{ books = data; renderHome(); })
+    .catch(err=>{ console.error('Fetch books failed', err); });
+}
+
+function fetchRequests() {
+  if (!isAdmin) return;
+  fetch('/api/requests', {headers:{'X-Admin-Password': ADMIN_PASSWORD}})
+    .then(r=>r.json())
+    .then(data=>{ requests = data; if (document.getElementById('admin-requests').style.display !== 'none') renderAdminRequests(); })
+    .catch(err=>{ console.error('Fetch requests failed', err); });
+}
+
 
 function authenticateAdmin() {
   const pwd = prompt('כניסה למצב עריכה\nהכנס סיסמת אדמין:');
@@ -703,38 +710,44 @@ function submitRequest(bookId) {
   }
 
   const submitted = {bookId,bookTitle:book.title,name,phone,email,note,date:new Date().toLocaleString('he-IL')};
-  requests.push(submitted);
+  fetch('/api/requests', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({bookId, bookTitle: book.title, name, phone, email, note})
+  })
+  .then(r=>r.json())
+  .then(data=>{
+    if (data.error) throw new Error(data.error);
 
-  const successHtml = `
-    <div class="success-box">
-      <div class="success-icon">✅</div>
-      <p>תודה ${name}!<br>בקשתך לרכישת <strong>${book.title}</strong> התקבלה.<br>בעל האתר יצור איתך קשר בהקדם.</p>
-    </div>`;
+    const successHtml = `
+      <div class="success-box">
+        <div class="success-icon">✅</div>
+        <p>תודה ${name}!<br>בקשתך לרכישת <strong>${book.title}</strong> התקבלה.<br>בעל האתר יצור איתך קשר בהקדם.</p>
+      </div>`;
 
-  document.getElementById('buy-form-inner').innerHTML = successHtml;
+    document.getElementById('buy-form-inner').innerHTML = successHtml;
+    fetchRequests();
 
-  if (window.emailjs && EMAILJS_SERVICE_ID !== 'your_service_id') {
-    const templateParams = {
-      owner_email: OWNER_EMAIL,
-      book_title: book.title,
-      book_category: book.cat,
-      book_price: book.price,
-      name,
-      phone,
-      email,
-      note,
-      requested_at: submitted.date,
-    };
-
-    emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, templateParams)
-      .then(function() {
-        console.log('EmailJS: הודעת בקשה נשלחה בהצלחה');
-      }, function(error) {
-        console.error('EmailJS failed:', error);
-      });
-  } else {
-    console.warn('EmailJS לא מאופשר; ודא ש-EMAILJS_SERVICE_ID ובגיריה הותאמו');
-  }
+    if (window.emailjs && EMAILJS_SERVICE_ID !== 'your_service_id') {
+      const templateParams = {
+        owner_email: OWNER_EMAIL,
+        book_title: book.title,
+        book_category: book.cat,
+        book_price: book.price,
+        name,
+        phone,
+        email,
+        note,
+        requested_at: data.request.date,
+      };
+      emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, templateParams)
+        .then(() => console.log('EmailJS: הודעת בקשה נשלחה בהצלחה'))
+        .catch(error => console.error('EmailJS failed:', error));
+    }
+  })
+  .catch(err=>{
+    document.getElementById('buy-msg').innerHTML = '<p style="color:var(--rust);font-size:0.82rem;margin-bottom:0.5rem">⚠️ קרתה שגיאה: '+err.message+'</p>';
+  });
 }
 
 function openAdmin() {
@@ -764,11 +777,26 @@ function addBook() {
   if(!title||!author||!cat||!price) {
     msg.innerHTML='<p style="color:var(--rust);font-size:0.82rem">⚠️ נא למלא את כל השדות</p>'; return;
   }
-  books.unshift({id:nextId++,title,author,cat,price,date:Date.now(),image:image||undefined});
-  msg.innerHTML='<p style="color:var(--sage);font-size:0.82rem">✅ הספר "'+title+'" נוסף בהצלחה!</p>';
-  ['a-title','a-author','a-price'].forEach(id=>document.getElementById(id).value='');
-  document.getElementById('a-cat').value='';
-  renderHome();
+  fetch('/api/books', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Admin-Password': ADMIN_PASSWORD
+    },
+    body: JSON.stringify({title,author,cat,price,image})
+  })
+  .then(res => res.json())
+  .then(data => {
+    if (data.error) throw new Error(data.error);
+    msg.innerHTML='<p style="color:var(--sage);font-size:0.82rem">✅ הספר "'+data.title+'" נוסף בהצלחה!</p>';
+    document.getElementById('a-title').value='';
+    document.getElementById('a-author').value='';
+    document.getElementById('a-price').value='';
+    document.getElementById('a-cat').value='';
+    document.getElementById('a-image').value='';
+    fetchBooks();
+  })
+  .catch(err=>{ msg.innerHTML='<p style="color:var(--rust);font-size:0.82rem">⚠️ תקלה ביצירת ספר: '+err.message+'</p>'; });
 }
 
 function renderAdminBooks() {
@@ -809,27 +837,43 @@ function saveBookEdits() {
     msg.innerHTML = '<p style="color:var(--rust);font-size:0.82rem">⚠️ יש למלא את כל השדות המתחייבים</p>';
     return;
   }
-  const b = books.find(x=>x.id===editingBookId);
-  if(!b) {
+  if (!editingBookId) {
     msg.innerHTML = '<p style="color:var(--rust);font-size:0.82rem">⚠️ כשלון בעדכון ספר</p>';
     return;
   }
-  b.title = title;
-  b.author = author;
-  b.cat = cat;
-  b.price = price;
-  b.image = image || undefined;
-  renderAdminBooks();
-  renderHome();
-  msg.innerHTML = '<p style="color:var(--sage);font-size:0.82rem">✅ הפרטים נשמרו</p>';
-  setTimeout(()=>closeModal('edit-book-modal'), 900);
+  fetch('/api/books/'+editingBookId, {
+    method:'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Admin-Password': ADMIN_PASSWORD
+    },
+    body: JSON.stringify({title,author,cat,price,image})
+  })
+  .then(r=>r.json())
+  .then(data=>{
+    if (data.error) throw new Error(data.error);
+    msg.innerHTML = '<p style="color:var(--sage);font-size:0.82rem">✅ הפרטים נשמרו</p>';
+    fetchBooks();
+    setTimeout(()=>closeModal('edit-book-modal'), 900);
+  })
+  .catch(err=>{
+    msg.innerHTML = '<p style="color:var(--rust);font-size:0.82rem">⚠️ כשלון בעדכון: '+err.message+'</p>';
+  });
 }
 
 function deleteBook(id) {
   if(!isAdmin){ alert('יש להיכנס למצב עריכה עם סיסמה לפני מחיקה'); return; }
   if(!confirm('האם למחוק ספר זה?')) return;
-  books = books.filter(b=>b.id!==id);
-  renderAdminBooks(); renderHome();
+  fetch('/api/books/'+id, {
+    method:'DELETE',
+    headers:{'X-Admin-Password': ADMIN_PASSWORD}
+  })
+  .then(r=>r.json())
+  .then(data=>{
+    if (data.error) throw new Error(data.error);
+    fetchBooks();
+  })
+  .catch(err=>alert('מחיקה נכשלה: '+err.message));
 }
 
 function renderAdminRequests() {
