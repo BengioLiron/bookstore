@@ -8,7 +8,7 @@ app.use(cors());
 app.use(express.json());
 
 const DB_FILE = path.join(__dirname, 'db.json');
-const ADMIN_PASSWORD = 'ספרן2026'; // אפשר לשנות ולטעון environment production
+const ADMIN_PASSWORD = 'admin2026'; // Changed to ASCII to match client password
 
 function readDb() {
   try {
